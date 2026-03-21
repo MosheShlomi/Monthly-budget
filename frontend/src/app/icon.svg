@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" fill="none">
+  <!-- Background -->
+  <rect width="32" height="32" rx="8" fill="#6366f1"/>
+  <!-- Lucide Wallet icon, scaled and centered (original 24x24 → translated to fit in 32x32 with 4px padding) -->
+  <g transform="translate(4, 4) scale(1)">
+    <path d="M21 12V7H5a2 2 0 0 1 0-4h14v4" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M3 5v14a2 2 0 0 0 2 2h16v-5" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M18 12a2 2 0 0 0 0 4h4v-4Z" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+  </g>
+</svg>
