@@ -55,6 +55,9 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
+      - name: Trigger Render redeploy
+        run: curl -s "${{ secrets.RENDER_DEPLOY_HOOK_URL }}"
+
   # ───────────────────────────────────────────────────────────────────────────
   # JOB 2: Build static export & deploy to GitHub Pages
   # ───────────────────────────────────────────────────────────────────────────
