@@ -58,7 +58,7 @@ async def create_invite(
     else:
         try:
             resend.api_key = settings.RESEND_API_KEY
-            invite_url = f"{settings.FRONTEND_URL}/invite/{token}"
+            invite_url = f"{settings.FRONTEND_URL}/invite?token={token}"
 
             family_result = await db.execute(select(Family).where(Family.id == family_id))
             family = family_result.scalar_one_or_none()

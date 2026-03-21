@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { useParams, useRouter } from "next/navigation";
+import { Suspense, useEffect, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { Users, CheckCircle, XCircle } from "lucide-react";
 import { apiFetch } from "@/lib/api";
@@ -11,8 +11,9 @@ import { Spinner } from "@/components/ui/Spinner";
 import { toast } from "sonner";
 import type { FamilyInvite, FamilyMember } from "@/types";
 
-export default function InvitePageClient() {
-  const { token } = useParams<{ token: string }>();
+function InviteContent() {
+  const searchParams = useSearchParams();
+  const token = searchParams.get("token");
   const router = useRouter();
   const [invite, setInvite] = useState<FamilyInvite | null>(null);
   const [loading, setLoading] = useState(true);
@@ -27,7 +28,11 @@ export default function InvitePageClient() {
   }, []);
 
   useEffect(() => {
-    if (!token) return;
+    if (!token) {
+      setError("קישור הזמנה לא תקין");
+      setLoading(false);
+      return;
+    }
     apiFetch<FamilyInvite>(`/api/v1/invites/${token}`)
       .then(setInvite)
       .catch((e) => setError(e.message))
@@ -36,7 +41,7 @@ export default function InvitePageClient() {
 
   async function handleAccept() {
     if (!isLoggedIn) {
-      router.push(`/login?redirect=/invite/${token}`);
+      router.push(`/login?redirect=/invite?token=${token}`);
       return;
     }
 
@@ -93,14 +98,14 @@ export default function InvitePageClient() {
                     יש להתחבר תחילה כדי לקבל את ההזמנה
                   </p>
                   <Button
-                    onClick={() => router.push(`/login?redirect=/invite/${token}`)}
+                    onClick={() => router.push(`/login?redirect=/invite?token=${token}`)}
                     className="w-full"
                   >
                     התחבר וקבל הזמנה
                   </Button>
                   <Button
                     variant="outline"
-                    onClick={() => router.push(`/register?redirect=/invite/${token}`)}
+                    onClick={() => router.push(`/register?redirect=/invite?token=${token}`)}
                     className="w-full"
                   >
                     הירשם וקבל הזמנה
@@ -117,5 +122,13 @@ export default function InvitePageClient() {
         </div>
       </div>
     </div>
+  );
+}
+
+export default function InvitePage() {
+  return (
+    <Suspense>
+      <InviteContent />
+    </Suspense>
   );
 }
