@@ -16,10 +16,11 @@ async def dashboard_summary(
     family_id: uuid.UUID,
     months: List[int] = Query(...),
     years: List[int] = Query(...),
+    user_ids: List[str] = Query(default=[]),
     current_user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    return await get_dashboard_summary(db, family_id, months, years, current_user["id"])
+    return await get_dashboard_summary(db, family_id, months, years, user_ids, current_user["id"])
 
 
 @router.get("/yearly")

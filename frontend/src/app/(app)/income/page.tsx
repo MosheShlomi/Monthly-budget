@@ -307,7 +307,7 @@ export default function IncomePage() {
           <h1 className="text-2xl font-bold text-slate-900">הכנסות</h1>
           {incomes.length > 0 && (
             <p className="text-sm text-slate-500 mt-0.5">
-              {incomes.length} רשומות · סה&quot;כ <span dir="ltr">{fmt(total, "+")}</span>
+              {incomes.length} רשומות · סה&quot;כ <span dir="ltr">{fmt(total)}</span>
             </p>
           )}
         </div>
@@ -387,7 +387,7 @@ export default function IncomePage() {
                     style={{ backgroundColor: income.category_color ?? "#10b981" }}
                   />
                   <span className="text-base font-semibold text-emerald-600 min-w-[80px]" dir="ltr">
-                    {fmtStr(income.amount, "+")}
+                    {fmtStr(income.amount)}
                   </span>
                   {income.category_name && (
                     <span

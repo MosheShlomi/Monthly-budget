@@ -43,7 +43,7 @@ export function SpendingList({ spendings, onEdit, onDelete, currentUserId, isOwn
             <div className="flex-1 min-w-0">
               <div className="flex items-center gap-2 flex-wrap">
                 <span className="text-sm font-medium text-slate-900" dir="ltr">
-                  {fmtStr(s.amount, "-")}
+                  {fmtStr(s.amount)}
                 </span>
                 {s.category_name && (
                   <Badge color={s.category_color}>{s.category_name}</Badge>

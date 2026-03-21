@@ -1,6 +1,13 @@
 import { supabase } from "./supabase";
 
 const API_URL = (process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000").replace(/\/$/, "");
+const BASE_PATH = process.env.NEXT_PUBLIC_BASE_PATH || "";
+
+async function handleUnauthenticated(): Promise<never> {
+  await supabase.auth.signOut();
+  window.location.href = `${BASE_PATH}/login`;
+  throw new Error("Not authenticated");
+}
 
 async function getToken(): Promise<string | null> {
   const { data } = await supabase.auth.getSession();
@@ -33,6 +40,7 @@ export async function apiFetch<T>(
       const err = await res.json();
       detail = err.detail || detail;
     } catch {}
+    if (detail === "Not authenticated") return handleUnauthenticated();
     throw new Error(detail);
   }
 
@@ -66,6 +74,7 @@ export async function apiUpload<T>(
       const err = await res.json();
       detail = err.detail || detail;
     } catch {}
+    if (detail === "Not authenticated") return handleUnauthenticated();
     throw new Error(detail);
   }
 

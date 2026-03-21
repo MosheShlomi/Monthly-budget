@@ -32,10 +32,11 @@ function periodLabel(months: number[], years: number[]): string {
 }
 
 export default function DashboardPage() {
-  const { currentFamily } = useFamilyStore();
+  const { currentFamily, members } = useFamilyStore();
   const now = new Date();
   const [months, setMonths] = useState<number[]>([now.getMonth() + 1]);
   const [years, setYears] = useState<number[]>([now.getFullYear()]);
+  const [userIds, setUserIds] = useState<string[]>([]);
   const [summary, setSummary] = useState<DashboardSummary | null>(null);
   const [loading, setLoading] = useState(false);
 
@@ -45,13 +46,14 @@ export default function DashboardPage() {
     const params = new URLSearchParams();
     months.forEach((m) => params.append("months", String(m)));
     years.forEach((y) => params.append("years", String(y)));
+    userIds.forEach((id) => params.append("user_ids", id));
     apiFetch<DashboardSummary>(
       `/api/v1/families/${currentFamily.id}/dashboard/summary?${params.toString()}`
     )
       .then(setSummary)
       .catch(() => setSummary(null))
       .finally(() => setLoading(false));
-  }, [currentFamily, months, years]);
+  }, [currentFamily, months, years, userIds]);
 
   const monthOptions = MONTH_NAMES.slice(1).map((name, i) => ({
     value: String(i + 1),
@@ -62,6 +64,11 @@ export default function DashboardPage() {
     const y = now.getFullYear() - 2 + i;
     return { value: String(y), label: String(y) };
   });
+
+  const memberOptions = members.map((m) => ({
+    value: m.user_id,
+    label: m.user_name || m.user_email,
+  }));
 
   if (!currentFamily) {
     return (
@@ -80,25 +87,32 @@ export default function DashboardPage() {
   return (
     <div className="max-w-6xl mx-auto space-y-6">
       {/* Header */}
-      <div className="flex flex-wrap items-center justify-between gap-4">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h1 className="text-2xl font-bold text-slate-900">Dashboard</h1>
           <p className="text-sm text-slate-500 mt-0.5">{currentFamily.name}</p>
         </div>
-        <div className="flex gap-3">
+        <div className="flex flex-wrap gap-2">
           <MultiSelect
             options={monthOptions}
             selected={months.map(String)}
             onChange={(vals) => setMonths(vals.map(Number))}
             placeholder="כל החודשים"
-            className="w-36"
+            className="w-32"
           />
           <MultiSelect
             options={yearOptions}
             selected={years.map(String)}
             onChange={(vals) => setYears(vals.map(Number))}
             placeholder="כל השנים"
-            className="w-28"
+            className="w-24"
+          />
+          <MultiSelect
+            options={memberOptions}
+            selected={userIds}
+            onChange={setUserIds}
+            placeholder="כל החברים"
+            className="w-36"
           />
         </div>
       </div>
@@ -114,54 +128,54 @@ export default function DashboardPage() {
       ) : summary ? (
         <>
           {/* Summary cards */}
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+          <div className="grid grid-cols-3 gap-2 sm:gap-4">
             {/* Expenses */}
-            <Card className="bg-gradient-to-l from-primary-600 to-primary-500 text-white border-0">
-              <div className="flex items-start justify-between">
-                <div>
-                  <p className="text-sm font-medium opacity-80">סה&quot;כ הוצאות</p>
-                  <p className="text-3xl font-bold mt-1" dir="ltr">
-                    {fmt(parseFloat(summary.total_spent), "-")}
+            <Card className="bg-gradient-to-l from-primary-600 to-primary-500 text-white border-0 p-3 sm:p-5">
+              <div className="flex items-start justify-between gap-1">
+                <div className="min-w-0">
+                  <p className="text-xs sm:text-sm font-medium opacity-80 truncate">סה&quot;כ הוצאות</p>
+                  <p className="text-base sm:text-3xl font-bold mt-1 truncate" dir="ltr">
+                    {fmt(parseFloat(summary.total_spent))}
                   </p>
-                  <p className="text-xs opacity-60 mt-1">{period}</p>
+                  <p className="text-xs opacity-60 mt-1 hidden sm:block">{period}</p>
                 </div>
-                <TrendingDown className="w-6 h-6 opacity-60" />
+                <TrendingDown className="w-4 h-4 sm:w-6 sm:h-6 opacity-60 flex-shrink-0 mt-0.5" />
               </div>
             </Card>
 
             {/* Income */}
-            <Card className="bg-gradient-to-l from-emerald-600 to-emerald-500 text-white border-0">
-              <div className="flex items-start justify-between">
-                <div>
-                  <p className="text-sm font-medium opacity-80">סה&quot;כ הכנסות</p>
-                  <p className="text-3xl font-bold mt-1" dir="ltr">
-                    {fmt(parseFloat(summary.total_income), "+")}
+            <Card className="bg-gradient-to-l from-emerald-600 to-emerald-500 text-white border-0 p-3 sm:p-5">
+              <div className="flex items-start justify-between gap-1">
+                <div className="min-w-0">
+                  <p className="text-xs sm:text-sm font-medium opacity-80 truncate">סה&quot;כ הכנסות</p>
+                  <p className="text-base sm:text-3xl font-bold mt-1 truncate" dir="ltr">
+                    {fmt(parseFloat(summary.total_income))}
                   </p>
-                  <p className="text-xs opacity-60 mt-1">{period}</p>
+                  <p className="text-xs opacity-60 mt-1 hidden sm:block">{period}</p>
                 </div>
-                <TrendingUp className="w-6 h-6 opacity-60" />
+                <TrendingUp className="w-4 h-4 sm:w-6 sm:h-6 opacity-60 flex-shrink-0 mt-0.5" />
               </div>
             </Card>
 
             {/* Net savings */}
             <Card
-              className={`border-0 text-white ${
+              className={`border-0 text-white p-3 sm:p-5 ${
                 netSavings >= 0
                   ? "bg-gradient-to-l from-sky-600 to-sky-500"
                   : "bg-gradient-to-l from-red-600 to-red-500"
               }`}
             >
-              <div className="flex items-start justify-between">
-                <div>
-                  <p className="text-sm font-medium opacity-80">חיסכון נטו</p>
-                  <p className="text-3xl font-bold mt-1" dir="ltr">
+              <div className="flex items-start justify-between gap-1">
+                <div className="min-w-0">
+                  <p className="text-xs sm:text-sm font-medium opacity-80 truncate">חיסכון נטו</p>
+                  <p className="text-base sm:text-3xl font-bold mt-1 truncate" dir="ltr">
                     {fmt(netSavings, "auto")}
                   </p>
-                  <p className="text-xs opacity-60 mt-1">
+                  <p className="text-xs opacity-60 mt-1 hidden sm:block">
                     הכנסות פחות הוצאות
                   </p>
                 </div>
-                <Scale className="w-6 h-6 opacity-60" />
+                <Scale className="w-4 h-4 sm:w-6 sm:h-6 opacity-60 flex-shrink-0 mt-0.5" />
               </div>
             </Card>
           </div>

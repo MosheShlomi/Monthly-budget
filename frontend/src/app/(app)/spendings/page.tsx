@@ -85,7 +85,7 @@ export default function SpendingsPage() {
           <h1 className="text-2xl font-bold text-slate-900">הוצאות</h1>
           {spendings.length > 0 && (
             <p className="text-sm text-slate-500 mt-0.5">
-              {spendings.length} רשומות · סה&quot;כ <span dir="ltr">{fmt(total, "-")}</span>
+              {spendings.length} רשומות · סה&quot;כ <span dir="ltr">{fmt(total)}</span>
             </p>
           )}
         </div>

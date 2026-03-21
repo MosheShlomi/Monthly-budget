@@ -30,15 +30,21 @@ async def get_dashboard_summary(
     family_id: uuid.UUID,
     months: List[int],
     years: List[int],
+    user_ids: List[str],
     user_id: str,
 ) -> DashboardSummary:
     await _verify_member(db, family_id, user_id)
 
+    parsed_user_ids = [uuid.UUID(uid) for uid in user_ids] if user_ids else []
+
     def _month_year_filter(model: type) -> list:
-        return [
+        filters = [
             extract("month", model.date).in_(months),
             extract("year", model.date).in_(years),
         ]
+        if parsed_user_ids:
+            filters.append(model.user_id.in_(parsed_user_ids))
+        return filters
 
     # Total spent
     total_spent_result = await db.execute(
