@@ -1,5 +1,10 @@
 "use client";
 
+// Required for output: 'export' — tokens are runtime UUIDs, resolved client-side.
+export function generateStaticParams() {
+  return [];
+}
+
 import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
