@@ -1,3 +1,5 @@
+from typing import List
+
 from fastapi import HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, extract
@@ -26,18 +28,23 @@ async def _verify_member(db: AsyncSession, family_id: uuid.UUID, user_id: str) -
 async def get_dashboard_summary(
     db: AsyncSession,
     family_id: uuid.UUID,
-    month: int,
-    year: int,
+    months: List[int],
+    years: List[int],
     user_id: str,
 ) -> DashboardSummary:
     await _verify_member(db, family_id, user_id)
+
+    def _month_year_filter(model: type) -> list:
+        return [
+            extract("month", model.date).in_(months),
+            extract("year", model.date).in_(years),
+        ]
 
     # Total spent
     total_spent_result = await db.execute(
         select(func.coalesce(func.sum(Spending.amount), 0)).where(
             Spending.family_id == family_id,
-            extract("month", Spending.date) == month,
-            extract("year", Spending.date) == year,
+            *_month_year_filter(Spending),
         )
     )
     total_spent = Decimal(str(total_spent_result.scalar()))
@@ -46,8 +53,7 @@ async def get_dashboard_summary(
     total_income_result = await db.execute(
         select(func.coalesce(func.sum(Income.amount), 0)).where(
             Income.family_id == family_id,
-            extract("month", Income.date) == month,
-            extract("year", Income.date) == year,
+            *_month_year_filter(Income),
         )
     )
     total_income = Decimal(str(total_income_result.scalar()))
@@ -64,8 +70,7 @@ async def get_dashboard_summary(
         .join(Category, Spending.category_id == Category.id)
         .where(
             Spending.family_id == family_id,
-            extract("month", Spending.date) == month,
-            extract("year", Spending.date) == year,
+            *_month_year_filter(Spending),
         )
         .group_by(Category.id, Category.name, Category.color)
         .order_by(func.sum(Spending.amount).desc())
@@ -91,8 +96,7 @@ async def get_dashboard_summary(
         .join(Category, Income.category_id == Category.id)
         .where(
             Income.family_id == family_id,
-            extract("month", Income.date) == month,
-            extract("year", Income.date) == year,
+            *_month_year_filter(Income),
         )
         .group_by(Category.id, Category.name, Category.color)
         .order_by(func.sum(Income.amount).desc())
@@ -117,8 +121,7 @@ async def get_dashboard_summary(
         )
         .where(
             Spending.family_id == family_id,
-            extract("month", Spending.date) == month,
-            extract("year", Spending.date) == year,
+            *_month_year_filter(Spending),
         )
         .group_by(Spending.user_id, Spending.user_email)
         .order_by(func.sum(Spending.amount).desc())
@@ -141,8 +144,7 @@ async def get_dashboard_summary(
         )
         .where(
             Spending.family_id == family_id,
-            extract("month", Spending.date) == month,
-            extract("year", Spending.date) == year,
+            *_month_year_filter(Spending),
         )
         .group_by(Spending.payment_method)
     )
