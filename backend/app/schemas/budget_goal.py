@@ -21,5 +21,6 @@ class BudgetGoalOut(BaseModel):
     spent: Optional[Decimal] = None
     category_name: Optional[str] = None
     category_color: Optional[str] = None
+    category_type: Optional[str] = None
 
     model_config = {"from_attributes": True}

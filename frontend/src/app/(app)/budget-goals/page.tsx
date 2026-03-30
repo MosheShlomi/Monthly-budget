@@ -1,13 +1,9 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { Plus, Target } from "lucide-react";
+import { useEffect, useState, useRef } from "react";
 import { useFamilyStore } from "@/store/familyStore";
 import { apiFetch } from "@/lib/api";
-import { Button } from "@/components/ui/Button";
 import { Card } from "@/components/ui/Card";
-import { Input } from "@/components/ui/Input";
-import { Modal } from "@/components/ui/Modal";
 import { Select } from "@/components/ui/Select";
 import { Spinner } from "@/components/ui/Spinner";
 import { toast } from "sonner";
@@ -15,86 +11,221 @@ import type { BudgetGoal, Category } from "@/types";
 import { clsx } from "clsx";
 import { fmt } from "@/lib/format";
 
+type Tab = "expense" | "income";
+
 const MONTH_NAMES = [
   "", "ינואר", "פברואר", "מרץ", "אפריל", "מאי", "יוני",
   "יולי", "אוגוסט", "ספטמבר", "אוקטובר", "נובמבר", "דצמבר",
 ];
 
-export default function BudgetGoalsPage() {
-  const { currentFamily } = useFamilyStore();
+function nextMonthYear(): { month: number; year: number } {
   const now = new Date();
-  const [month, setMonth] = useState(now.getMonth() + 1);
-  const [year, setYear] = useState(now.getFullYear());
-  const [goals, setGoals] = useState<BudgetGoal[]>([]);
-  const [categories, setCategories] = useState<Category[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [formOpen, setFormOpen] = useState(false);
-  const [selectedCategory, setSelectedCategory] = useState("");
-  const [limitAmount, setLimitAmount] = useState("");
+  const m = now.getMonth() + 2;
+  if (m > 12) return { month: 1, year: now.getFullYear() + 1 };
+  return { month: m, year: now.getFullYear() };
+}
+
+interface GoalRowProps {
+  category: Category;
+  goal: BudgetGoal | undefined;
+  month: number;
+  year: number;
+  familyId: string;
+  onSaved: (goal: BudgetGoal) => void;
+}
+
+function GoalRow({ category, goal, month, year, familyId, onSaved }: GoalRowProps) {
+  const [value, setValue] = useState(goal ? parseFloat(goal.limit_amount).toFixed(0) : "");
   const [saving, setSaving] = useState(false);
+  const inputRef = useRef<HTMLInputElement>(null);
 
-  async function loadGoals() {
-    if (!currentFamily) return;
-    setLoading(true);
-    try {
-      const data = await apiFetch<BudgetGoal[]>(
-        `/api/v1/families/${currentFamily.id}/budget-goals?month=${month}&year=${year}`
-      );
-      setGoals(data);
-    } catch {
-      toast.error("שגיאה בטעינת יעדים");
-    } finally {
-      setLoading(false);
-    }
-  }
-
+  // Reset local value when goal or month/year changes
   useEffect(() => {
-    if (currentFamily) {
-      apiFetch<Category[]>(`/api/v1/families/${currentFamily.id}/categories`)
-        .then(setCategories)
-        .catch(() => {});
-    }
-  }, [currentFamily]);
+    setValue(goal ? parseFloat(goal.limit_amount).toFixed(0) : "");
+  }, [goal, month, year]);
 
-  useEffect(() => {
-    loadGoals();
-  }, [currentFamily, month, year]);
+  async function save() {
+    const amount = parseFloat(value);
+    if (isNaN(amount) || amount < 0) return;
+    // Skip if unchanged
+    if (goal && parseFloat(goal.limit_amount) === amount) return;
+    // Skip if empty (no goal to create)
+    if (!value.trim() && !goal) return;
 
-  async function handleSave() {
-    if (!currentFamily || !selectedCategory || !limitAmount) return;
     setSaving(true);
     try {
-      await apiFetch(`/api/v1/families/${currentFamily.id}/budget-goals`, {
+      const saved = await apiFetch<BudgetGoal>(`/api/v1/families/${familyId}/budget-goals`, {
         method: "PUT",
         body: JSON.stringify({
-          category_id: selectedCategory,
+          category_id: category.id,
           month,
           year,
-          limit_amount: parseFloat(limitAmount),
+          limit_amount: amount || 0,
         }),
       });
-      toast.success("יעד נשמר");
-      setFormOpen(false);
-      loadGoals();
-    } catch (e: unknown) {
-      toast.error(e instanceof Error ? e.message : "שגיאה");
+      onSaved(saved);
+    } catch {
+      toast.error("שגיאה בשמירת יעד");
     } finally {
       setSaving(false);
     }
   }
 
-  async function handleDelete(goalId: string) {
-    if (!currentFamily) return;
-    if (!confirm("למחוק יעד זה?")) return;
-    try {
-      await apiFetch(`/api/v1/families/${currentFamily.id}/budget-goals/${goalId}`, {
-        method: "DELETE",
-      });
-      toast.success("יעד נמחק");
-      loadGoals();
-    } catch {
-      toast.error("שגיאה במחיקת יעד");
+  function onKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
+    if (e.key === "Enter") {
+      inputRef.current?.blur();
     }
+  }
+
+  const limit = goal ? parseFloat(goal.limit_amount) : 0;
+  const spent = goal ? parseFloat(goal.spent || "0") : 0;
+  const isIncome = category.type === "income";
+  const pct = limit > 0 ? Math.min(100, (spent / limit) * 100) : 0;
+  const isOver = limit > 0 && spent > limit;
+  const isUnder = isIncome && limit > 0 && spent < limit;
+
+  return (
+    <div className="flex flex-col gap-2 py-3 border-b border-slate-100 last:border-0">
+      {/* Top row: color dot + name + input + saving indicator */}
+      <div className="flex items-center gap-2">
+        <div
+          className="w-2.5 h-2.5 rounded-full flex-shrink-0"
+          style={{ backgroundColor: category.color || "#6366f1" }}
+        />
+        <span className="flex-1 text-sm font-medium text-slate-800 truncate">
+          {category.name}
+        </span>
+        <div className="flex items-center gap-1 flex-shrink-0">
+          <span className="text-xs text-slate-400">₪</span>
+          <input
+            ref={inputRef}
+            type="number"
+            min="0"
+            step="1"
+            value={value}
+            onChange={(e) => setValue(e.target.value)}
+            onBlur={save}
+            onKeyDown={onKeyDown}
+            placeholder="אין יעד"
+            className={clsx(
+              "w-20 sm:w-24 text-left text-sm border rounded-lg px-2 py-1 outline-none transition",
+              "border-slate-200 focus:border-primary-400 focus:ring-1 focus:ring-primary-200",
+              "text-slate-800 placeholder-slate-300"
+            )}
+          />
+          {saving && <Spinner size="sm" />}
+        </div>
+      </div>
+
+      {/* Progress bar — only shown when a goal exists */}
+      {goal && limit > 0 && (
+        <div className="pl-4">
+          <div className="flex items-center justify-between mb-1">
+            <span className="text-xs text-slate-400" dir="ltr">
+              {fmt(spent)} / {fmt(limit)}
+            </span>
+            <span
+              className={clsx(
+                "text-xs font-medium",
+                isOver ? "text-red-500" : isUnder ? "text-amber-500" : "text-emerald-600"
+              )}
+            >
+              {pct.toFixed(0)}%
+            </span>
+          </div>
+          <div className="w-full bg-slate-100 rounded-full h-1.5">
+            <div
+              className={clsx(
+                "h-1.5 rounded-full transition-all",
+                isIncome
+                  ? isOver ? "bg-emerald-500" : "bg-amber-400"
+                  : isOver ? "bg-red-500" : pct > 80 ? "bg-orange-400" : "bg-primary-500"
+              )}
+              style={{ width: `${pct}%` }}
+            />
+          </div>
+          {!isIncome && isOver && (
+            <p className="text-xs text-red-500 mt-0.5" dir="ltr">
+              חרגת ב-{fmt(spent - limit)}
+            </p>
+          )}
+          {isIncome && isUnder && (
+            <p className="text-xs text-amber-500 mt-0.5" dir="ltr">
+              חסר {fmt(limit - spent)} ליעד
+            </p>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+interface SectionProps {
+  title: string;
+  categories: Category[];
+  goalsMap: Map<string, BudgetGoal>;
+  month: number;
+  year: number;
+  familyId: string;
+  onSaved: (goal: BudgetGoal) => void;
+}
+
+function Section({ title, categories, goalsMap, month, year, familyId, onSaved }: SectionProps) {
+  if (categories.length === 0) return null;
+  return (
+    <Card>
+      <h2 className="text-sm font-semibold text-slate-500 uppercase tracking-wide mb-1">{title}</h2>
+      <div>
+        {categories.map((cat) => (
+          <GoalRow
+            key={cat.id}
+            category={cat}
+            goal={goalsMap.get(cat.id)}
+            month={month}
+            year={year}
+            familyId={familyId}
+            onSaved={onSaved}
+          />
+        ))}
+      </div>
+    </Card>
+  );
+}
+
+export default function BudgetGoalsPage() {
+  const { currentFamily } = useFamilyStore();
+  const { month: defaultMonth, year: defaultYear } = nextMonthYear();
+  const [tab, setTab] = useState<Tab>("expense");
+  const [month, setMonth] = useState(defaultMonth);
+  const [year, setYear] = useState(defaultYear);
+  const [categories, setCategories] = useState<Category[]>([]);
+  const [goalsMap, setGoalsMap] = useState<Map<string, BudgetGoal>>(new Map());
+  const [loading, setLoading] = useState(false);
+
+  const now = new Date();
+
+  useEffect(() => {
+    if (!currentFamily) return;
+    apiFetch<Category[]>(`/api/v1/families/${currentFamily.id}/categories`)
+      .then(setCategories)
+      .catch(() => {});
+  }, [currentFamily]);
+
+  useEffect(() => {
+    if (!currentFamily) return;
+    setLoading(true);
+    apiFetch<BudgetGoal[]>(
+      `/api/v1/families/${currentFamily.id}/budget-goals?month=${month}&year=${year}`
+    )
+      .then((goals) => {
+        setGoalsMap(new Map(goals.map((g) => [g.category_id, g])));
+      })
+      .catch(() => {})
+      .finally(() => setLoading(false));
+  }, [currentFamily, month, year]);
+
+  function handleSaved(goal: BudgetGoal) {
+    setGoalsMap((prev) => new Map(prev).set(goal.category_id, goal));
   }
 
   if (!currentFamily) {
@@ -111,136 +242,75 @@ export default function BudgetGoalsPage() {
     return { value: String(y), label: String(y) };
   });
 
-  const categoryOptions = categories.map((c) => ({ value: c.id, label: c.name }));
+  const visibleCategories = categories.filter((c) => c.type === tab);
 
   return (
-    <div className="max-w-2xl mx-auto space-y-6">
-      <div className="flex items-center justify-between flex-wrap gap-3">
-        <h1 className="text-2xl font-bold text-slate-900">יעדי תקציב</h1>
-        <Button onClick={() => { setSelectedCategory(""); setLimitAmount(""); setFormOpen(true); }}>
-          <Plus className="w-4 h-4" />
-          יעד חדש
-        </Button>
+    <div className="max-w-2xl mx-auto space-y-4">
+      {/* Header */}
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <h1 className="text-2xl font-bold text-slate-900">יעדי תקציב</h1>
+          <p className="text-sm text-slate-500 mt-0.5">
+            {MONTH_NAMES[month]} {year}
+          </p>
+        </div>
+        <div className="flex gap-2">
+          <Select
+            value={String(month)}
+            options={monthOptions}
+            onChange={(e) => setMonth(Number(e.target.value))}
+            className="w-32"
+          />
+          <Select
+            value={String(year)}
+            options={yearOptions}
+            onChange={(e) => setYear(Number(e.target.value))}
+            className="w-24"
+          />
+        </div>
       </div>
 
-      <div className="flex gap-3">
-        <Select
-          value={String(month)}
-          options={monthOptions}
-          onChange={(e) => setMonth(Number(e.target.value))}
-          className="w-36"
-        />
-        <Select
-          value={String(year)}
-          options={yearOptions}
-          onChange={(e) => setYear(Number(e.target.value))}
-          className="w-24"
-        />
+      {/* Tabs */}
+      <div className="flex gap-1 bg-slate-100 rounded-xl p-1 w-fit">
+        <button
+          onClick={() => setTab("expense")}
+          className={clsx(
+            "px-5 py-2 rounded-lg text-sm font-medium transition-all",
+            tab === "expense"
+              ? "bg-white text-slate-900 shadow-sm"
+              : "text-slate-500 hover:text-slate-700"
+          )}
+        >
+          הוצאות
+        </button>
+        <button
+          onClick={() => setTab("income")}
+          className={clsx(
+            "px-5 py-2 rounded-lg text-sm font-medium transition-all",
+            tab === "income"
+              ? "bg-white text-slate-900 shadow-sm"
+              : "text-slate-500 hover:text-slate-700"
+          )}
+        >
+          הכנסות
+        </button>
       </div>
 
       {loading ? (
-        <div className="flex justify-center py-10"><Spinner /></div>
-      ) : goals.length === 0 ? (
-        <Card className="text-center py-12">
-          <Target className="w-12 h-12 text-slate-200 mx-auto mb-3" />
-          <p className="text-slate-400 text-sm">לא הוגדרו יעדים ל{MONTH_NAMES[month]} {year}</p>
-          <Button onClick={() => setFormOpen(true)} className="mt-4" variant="outline">
-            הגדר יעד ראשון
-          </Button>
-        </Card>
+        <div className="flex justify-center py-16">
+          <Spinner size="lg" />
+        </div>
       ) : (
-        <div className="space-y-4">
-          {goals.map((goal) => {
-            const limit = parseFloat(goal.limit_amount);
-            const spent = parseFloat(goal.spent || "0");
-            const pct = limit > 0 ? Math.min(100, (spent / limit) * 100) : 0;
-            const isOver = spent > limit;
-
-            return (
-              <Card key={goal.id} padding="sm">
-                <div className="flex items-center justify-between mb-3">
-                  <div className="flex items-center gap-2">
-                    <div
-                      className="w-3 h-3 rounded-full"
-                      style={{ backgroundColor: goal.category_color || "#6366f1" }}
-                    />
-                    <span className="text-sm font-semibold text-slate-900">
-                      {goal.category_name}
-                    </span>
-                  </div>
-                  <div className="flex items-center gap-3">
-                    <span
-                      className={clsx(
-                        "text-sm font-medium",
-                        isOver ? "text-red-600" : "text-slate-600"
-                      )}
-                      dir="ltr"
-                    >
-                      {fmt(spent)} / {fmt(limit)}
-                    </span>
-                    <button
-                      onClick={() => handleDelete(goal.id)}
-                      className="text-xs text-red-400 hover:text-red-600"
-                    >
-                      מחק
-                    </button>
-                  </div>
-                </div>
-
-                <div className="w-full bg-slate-100 rounded-full h-2.5">
-                  <div
-                    className={clsx(
-                      "h-2.5 rounded-full transition-all",
-                      isOver ? "bg-red-500" : pct > 80 ? "bg-orange-400" : "bg-primary-500"
-                    )}
-                    style={{ width: `${pct}%` }}
-                  />
-                </div>
-
-                <div className="flex justify-between mt-1">
-                  <span className="text-xs text-slate-400">{pct.toFixed(0)}%</span>
-                  {isOver && (
-                    <span className="text-xs text-red-500 font-medium" dir="ltr">
-                      חרגת ב-{fmt(spent - limit)}
-                    </span>
-                  )}
-                </div>
-              </Card>
-            );
-          })}
-        </div>
+        <Section
+          title={tab === "expense" ? "יעדי הוצאות" : "יעדי הכנסות"}
+          categories={visibleCategories}
+          goalsMap={goalsMap}
+          month={month}
+          year={year}
+          familyId={currentFamily.id}
+          onSaved={handleSaved}
+        />
       )}
-
-      <Modal open={formOpen} onClose={() => setFormOpen(false)} title="יעד תקציב חדש">
-        <div className="space-y-4">
-          <Select
-            label="קטגוריה"
-            value={selectedCategory}
-            options={categoryOptions}
-            onChange={(e) => setSelectedCategory(e.target.value)}
-            placeholder="בחר קטגוריה"
-          />
-          <Input
-            label="סכום מקסימלי (₪)"
-            type="number"
-            step="0.01"
-            value={limitAmount}
-            onChange={(e) => setLimitAmount(e.target.value)}
-            placeholder="0.00"
-          />
-          <p className="text-xs text-slate-500">
-            יעד ל{MONTH_NAMES[month]} {year}
-          </p>
-          <div className="flex gap-3 pt-2">
-            <Button onClick={handleSave} loading={saving} className="flex-1">
-              שמור
-            </Button>
-            <Button variant="secondary" onClick={() => setFormOpen(false)} className="flex-1">
-              ביטול
-            </Button>
-          </div>
-        </div>
-      </Modal>
     </div>
   );
 }

@@ -1,11 +1,11 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, and_, func, extract
+from sqlalchemy import select, func, extract
 from app.database import get_db
 from app.dependencies import get_current_user
-from app.models.models import BudgetGoal, FamilyMember, Category, Spending
+from app.models.models import BudgetGoal, FamilyMember, Category, Spending, Income
 from app.schemas.budget_goal import BudgetGoalUpsert, BudgetGoalOut
-from typing import List, Optional
+from typing import List
 from decimal import Decimal
 import uuid
 
@@ -25,6 +25,26 @@ async def _get_member(family_id: uuid.UUID, user_id: str, db: AsyncSession) -> F
     return member
 
 
+def _build_goal_out(goal: BudgetGoal, category: Category, spent_map: dict, income_map: dict) -> BudgetGoalOut:
+    cat_type = category.type.value if hasattr(category.type, "value") else str(category.type)
+    if cat_type == "income":
+        actual = Decimal(str(income_map.get(str(goal.category_id), 0)))
+    else:
+        actual = Decimal(str(spent_map.get(str(goal.category_id), 0)))
+    return BudgetGoalOut(
+        id=goal.id,
+        family_id=goal.family_id,
+        category_id=goal.category_id,
+        month=goal.month,
+        year=goal.year,
+        limit_amount=goal.limit_amount,
+        spent=actual,
+        category_name=category.name,
+        category_color=category.color,
+        category_type=cat_type,
+    )
+
+
 @router.get("", response_model=List[BudgetGoalOut])
 async def list_budget_goals(
     family_id: uuid.UUID,
@@ -36,7 +56,9 @@ async def list_budget_goals(
     await _get_member(family_id, current_user["id"], db)
 
     result = await db.execute(
-        select(BudgetGoal, Category).join(Category, BudgetGoal.category_id == Category.id).where(
+        select(BudgetGoal, Category)
+        .join(Category, BudgetGoal.category_id == Category.id)
+        .where(
             BudgetGoal.family_id == family_id,
             BudgetGoal.month == month,
             BudgetGoal.year == year,
@@ -44,12 +66,8 @@ async def list_budget_goals(
     )
     rows = result.all()
 
-    # Get actual spending per category for this month/year
     spent_result = await db.execute(
-        select(
-            Spending.category_id,
-            func.sum(Spending.amount).label("total"),
-        )
+        select(Spending.category_id, func.sum(Spending.amount).label("total"))
         .where(
             Spending.family_id == family_id,
             extract("month", Spending.date) == month,
@@ -57,23 +75,21 @@ async def list_budget_goals(
         )
         .group_by(Spending.category_id)
     )
-    spent_map = {str(row.category_id): row.total for row in spent_result.all()}
+    spent_map = {str(r.category_id): r.total for r in spent_result.all()}
 
-    goals = []
-    for goal, category in rows:
-        out = BudgetGoalOut(
-            id=goal.id,
-            family_id=goal.family_id,
-            category_id=goal.category_id,
-            month=goal.month,
-            year=goal.year,
-            limit_amount=goal.limit_amount,
-            spent=Decimal(str(spent_map.get(str(goal.category_id), 0))),
-            category_name=category.name,
-            category_color=category.color,
+    income_result = await db.execute(
+        select(Income.category_id, func.sum(Income.amount).label("total"))
+        .where(
+            Income.family_id == family_id,
+            Income.category_id.isnot(None),
+            extract("month", Income.date) == month,
+            extract("year", Income.date) == year,
         )
-        goals.append(out)
-    return goals
+        .group_by(Income.category_id)
+    )
+    income_map = {str(r.category_id): r.total for r in income_result.all()}
+
+    return [_build_goal_out(goal, category, spent_map, income_map) for goal, category in rows]
 
 
 @router.put("", response_model=BudgetGoalOut)
@@ -85,7 +101,6 @@ async def upsert_budget_goal(
 ):
     await _get_member(family_id, current_user["id"], db)
 
-    # Upsert logic
     result = await db.execute(
         select(BudgetGoal).where(
             BudgetGoal.family_id == family_id,
@@ -111,22 +126,30 @@ async def upsert_budget_goal(
     await db.commit()
     await db.refresh(goal)
 
-    # Enrich with category info
-    result = await db.execute(
-        select(Category).where(Category.id == goal.category_id)
-    )
-    category = result.scalar_one_or_none()
+    cat_result = await db.execute(select(Category).where(Category.id == goal.category_id))
+    category = cat_result.scalar_one_or_none()
 
-    # Get spent
-    spent_result = await db.execute(
-        select(func.sum(Spending.amount)).where(
-            Spending.family_id == family_id,
-            Spending.category_id == goal.category_id,
-            extract("month", Spending.date) == body.month,
-            extract("year", Spending.date) == body.year,
+    cat_type = category.type.value if category and hasattr(category.type, "value") else str(category.type) if category else "expense"
+
+    if cat_type == "income":
+        actual_result = await db.execute(
+            select(func.sum(Income.amount)).where(
+                Income.family_id == family_id,
+                Income.category_id == goal.category_id,
+                extract("month", Income.date) == body.month,
+                extract("year", Income.date) == body.year,
+            )
         )
-    )
-    spent = spent_result.scalar() or Decimal("0")
+    else:
+        actual_result = await db.execute(
+            select(func.sum(Spending.amount)).where(
+                Spending.family_id == family_id,
+                Spending.category_id == goal.category_id,
+                extract("month", Spending.date) == body.month,
+                extract("year", Spending.date) == body.year,
+            )
+        )
+    actual = actual_result.scalar() or Decimal("0")
 
     return BudgetGoalOut(
         id=goal.id,
@@ -135,9 +158,10 @@ async def upsert_budget_goal(
         month=goal.month,
         year=goal.year,
         limit_amount=goal.limit_amount,
-        spent=Decimal(str(spent)),
+        spent=Decimal(str(actual)),
         category_name=category.name if category else None,
         category_color=category.color if category else None,
+        category_type=cat_type,
     )
 
 
@@ -151,9 +175,7 @@ async def delete_budget_goal(
     await _get_member(family_id, current_user["id"], db)
 
     result = await db.execute(
-        select(BudgetGoal).where(
-            BudgetGoal.id == goal_id, BudgetGoal.family_id == family_id
-        )
+        select(BudgetGoal).where(BudgetGoal.id == goal_id, BudgetGoal.family_id == family_id)
     )
     goal = result.scalar_one_or_none()
     if not goal:

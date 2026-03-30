@@ -68,6 +68,7 @@ export interface BudgetGoal {
   spent?: string;
   category_name?: string;
   category_color?: string;
+  category_type?: "expense" | "income";
 }
 
 export interface CategoryTotal {
