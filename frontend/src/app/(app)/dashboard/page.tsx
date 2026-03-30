@@ -3,11 +3,12 @@
 import { useEffect, useState } from "react";
 import { useFamilyStore } from "@/store/familyStore";
 import { apiFetch } from "@/lib/api";
-import type { DashboardSummary } from "@/types";
+import type { DashboardSummary, BudgetGoal } from "@/types";
 import { MonthlyBarChart } from "@/components/dashboard/MonthlyBarChart";
 import { CategoryDonut } from "@/components/dashboard/CategoryDonut";
 import { MemberComparison } from "@/components/dashboard/MemberComparison";
 import { PaymentSplit } from "@/components/dashboard/PaymentSplit";
+import { BudgetGoalsComparison } from "@/components/dashboard/BudgetGoalsComparison";
 import { Card } from "@/components/ui/Card";
 import { Spinner } from "@/components/ui/Spinner";
 import { MultiSelect } from "@/components/ui/MultiSelect";
@@ -38,6 +39,7 @@ export default function DashboardPage() {
   const [years, setYears] = useState<number[]>([now.getFullYear()]);
   const [userIds, setUserIds] = useState<string[]>([]);
   const [summary, setSummary] = useState<DashboardSummary | null>(null);
+  const [budgetGoals, setBudgetGoals] = useState<BudgetGoal[]>([]);
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
@@ -54,6 +56,18 @@ export default function DashboardPage() {
       .catch(() => setSummary(null))
       .finally(() => setLoading(false));
   }, [currentFamily, months, years, userIds]);
+
+  useEffect(() => {
+    if (!currentFamily || months.length !== 1 || years.length !== 1) {
+      setBudgetGoals([]);
+      return;
+    }
+    apiFetch<BudgetGoal[]>(
+      `/api/v1/families/${currentFamily.id}/budget-goals?month=${months[0]}&year=${years[0]}`
+    )
+      .then(setBudgetGoals)
+      .catch(() => setBudgetGoals([]));
+  }, [currentFamily, months, years]);
 
   const monthOptions = MONTH_NAMES.slice(1).map((name, i) => ({
     value: String(i + 1),
@@ -180,13 +194,29 @@ export default function DashboardPage() {
             </Card>
           </div>
 
-          {/* Charts grid */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            <MonthlyBarChart data={summary.monthly_bars} />
+          {/* Monthly bar - full width */}
+          <MonthlyBarChart data={summary.monthly_bars} />
+
+          {/* Category donuts side by side */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 md:gap-6">
             <CategoryDonut data={summary.by_category} />
+            <CategoryDonut
+              data={summary.income_by_category}
+              title="הכנסות לפי קטגוריה"
+              emptyText="אין הכנסות לחודש זה"
+            />
+          </div>
+
+          {/* Member + Payment side by side */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 md:gap-6">
             <MemberComparison data={summary.by_member} />
             <PaymentSplit data={summary.by_payment_method} />
           </div>
+
+          {/* Budget comparison - full width, only when single month */}
+          {budgetGoals.length > 0 && months.length === 1 && years.length === 1 && (
+            <BudgetGoalsComparison goals={budgetGoals} month={months[0]} year={years[0]} />
+          )}
         </>
       ) : (
         <Card className="text-center py-12">

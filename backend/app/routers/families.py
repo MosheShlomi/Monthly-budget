@@ -4,7 +4,7 @@ from sqlalchemy import select
 from app.database import get_db
 from app.dependencies import get_current_user
 from app.models.models import Family, FamilyMember, MemberRole
-from app.schemas.family import FamilyCreate, FamilyUpdate, FamilyOut
+from app.schemas.family import FamilyCreate, FamilyUpdate, FamilyOut, MemberStatusUpdate, MemberOut
 import uuid
 
 router = APIRouter(prefix="/families", tags=["families"])
@@ -107,3 +107,26 @@ async def delete_family(
 
     await db.delete(family)
     await db.commit()
+
+
+@router.patch("/{family_id}/members/me", response_model=MemberOut)
+async def update_my_status(
+    family_id: uuid.UUID,
+    body: MemberStatusUpdate,
+    current_user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(
+        select(FamilyMember).where(
+            FamilyMember.family_id == family_id,
+            FamilyMember.user_id == uuid.UUID(current_user["id"]),
+        )
+    )
+    member = result.scalar_one_or_none()
+    if not member:
+        raise HTTPException(status_code=404, detail="Member not found")
+
+    member.family_status = body.family_status
+    await db.commit()
+    await db.refresh(member)
+    return member

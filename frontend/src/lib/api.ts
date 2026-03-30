@@ -11,28 +11,44 @@ async function handleUnauthenticated(): Promise<never> {
 
 async function getToken(): Promise<string | null> {
   const { data } = await supabase.auth.getSession();
-  return data.session?.access_token ?? null;
+  if (!data.session) return null;
+
+  const expiresAt = data.session.expires_at;
+  const now = Math.floor(Date.now() / 1000);
+  if (expiresAt && expiresAt - now < 60) {
+    const { data: refreshed } = await supabase.auth.refreshSession();
+    return refreshed.session?.access_token ?? null;
+  }
+
+  return data.session.access_token;
 }
 
 export async function apiFetch<T>(
   path: string,
   options: RequestInit = {}
 ): Promise<T> {
-  const token = await getToken();
+  let token = await getToken();
 
-  const headers: HeadersInit = {
+  const buildHeaders = (t: string | null): Record<string, string> => ({
     "Content-Type": "application/json",
     ...(options.headers as Record<string, string>),
-  };
-
-  if (token) {
-    (headers as Record<string, string>)["Authorization"] = `Bearer ${token}`;
-  }
-
-  const res = await fetch(`${API_URL}${path}`, {
-    ...options,
-    headers,
+    ...(t ? { Authorization: `Bearer ${t}` } : {}),
   });
+
+  let res = await fetch(`${API_URL}${path}`, {
+    ...options,
+    headers: buildHeaders(token),
+  });
+
+  if (res.status === 401) {
+    const { data: refreshed } = await supabase.auth.refreshSession();
+    token = refreshed.session?.access_token ?? null;
+    if (!token) return handleUnauthenticated();
+    res = await fetch(`${API_URL}${path}`, {
+      ...options,
+      headers: buildHeaders(token),
+    });
+  }
 
   if (!res.ok) {
     let detail = `HTTP ${res.status}`;
@@ -55,18 +71,27 @@ export async function apiUpload<T>(
   path: string,
   formData: FormData
 ): Promise<T> {
-  const token = await getToken();
+  let token = await getToken();
 
-  const headers: Record<string, string> = {};
-  if (token) {
-    headers["Authorization"] = `Bearer ${token}`;
-  }
+  const buildHeaders = (t: string | null): Record<string, string> =>
+    t ? { Authorization: `Bearer ${t}` } : {};
 
-  const res = await fetch(`${API_URL}${path}`, {
+  let res = await fetch(`${API_URL}${path}`, {
     method: "POST",
-    headers,
+    headers: buildHeaders(token),
     body: formData,
   });
+
+  if (res.status === 401) {
+    const { data: refreshed } = await supabase.auth.refreshSession();
+    token = refreshed.session?.access_token ?? null;
+    if (!token) return handleUnauthenticated();
+    res = await fetch(`${API_URL}${path}`, {
+      method: "POST",
+      headers: buildHeaders(token),
+      body: formData,
+    });
+  }
 
   if (!res.ok) {
     let detail = `HTTP ${res.status}`;

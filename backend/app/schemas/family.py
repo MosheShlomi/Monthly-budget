@@ -27,9 +27,14 @@ class MemberOut(BaseModel):
     user_email: str
     user_name: Optional[str] = None
     role: str
+    family_status: Optional[str] = None
     joined_at: datetime
 
     model_config = {"from_attributes": True}
+
+
+class MemberStatusUpdate(BaseModel):
+    family_status: Optional[str] = None
 
 
 class InviteCreate(BaseModel):

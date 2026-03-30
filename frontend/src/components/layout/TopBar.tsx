@@ -7,22 +7,37 @@ import { LogOut, User, UserCircle } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { useFamilyStore } from "@/store/familyStore";
 
+const STATUS_LABELS: Record<string, string> = {
+  husband: "בעל",
+  wife: "אישה",
+  son: "בן",
+  daughter: "בת",
+  father: "אבא",
+  mother: "אמא",
+  grandfather: "סבא",
+  grandmother: "סבתא",
+  other: "אחר",
+};
+
 interface TopBarProps {
   title?: string;
 }
 
 export function TopBar({ title }: TopBarProps) {
   const router = useRouter();
-  const { currentFamily, clear } = useFamilyStore();
+  const { members, clear } = useFamilyStore();
   const [menuOpen, setMenuOpen] = useState(false);
   const [displayName, setDisplayName] = useState<string | null>(null);
   const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
+  const [myStatus, setMyStatus] = useState<string | null>(null);
 
   useEffect(() => {
     supabase.auth.getUser().then(({ data: { user } }) => {
       if (user) {
         setDisplayName(user.user_metadata?.full_name ?? user.email ?? null);
         setAvatarUrl(user.user_metadata?.avatar_url ?? null);
+        const myMember = members.find((m) => m.user_id === user.id);
+        setMyStatus(myMember?.family_status ?? null);
       }
     });
 
@@ -32,12 +47,14 @@ export function TopBar({ title }: TopBarProps) {
         if (user) {
           setDisplayName(user.user_metadata?.full_name ?? user.email ?? null);
           setAvatarUrl(user.user_metadata?.avatar_url ?? null);
+          const myMember = members.find((m) => m.user_id === user.id);
+          setMyStatus(myMember?.family_status ?? null);
         }
       }
     );
 
     return () => listener.subscription.unsubscribe();
-  }, []);
+  }, [members]);
 
   async function handleLogout() {
     await supabase.auth.signOut();
@@ -47,14 +64,9 @@ export function TopBar({ title }: TopBarProps) {
 
   return (
     <header className="h-14 bg-white border-b border-slate-200 flex items-center justify-between px-4 md:px-6 sticky top-0 z-20">
-      <div className="flex items-center gap-3">
+      <div className="flex items-center gap-2">
         {title && (
           <h1 className="text-lg font-semibold text-slate-900">{title}</h1>
-        )}
-        {!title && currentFamily && (
-          <span className="text-sm font-medium text-slate-600">
-            {currentFamily.name}
-          </span>
         )}
       </div>
 
@@ -77,6 +89,11 @@ export function TopBar({ title }: TopBarProps) {
           {displayName && (
             <span className="hidden md:block text-sm font-medium text-slate-700 max-w-[140px] truncate">
               {displayName}
+            </span>
+          )}
+          {myStatus && STATUS_LABELS[myStatus] && (
+            <span className="hidden md:inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-primary-100 text-primary-700">
+              {STATUS_LABELS[myStatus]}
             </span>
           )}
         </button>

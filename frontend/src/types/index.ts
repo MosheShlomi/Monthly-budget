@@ -11,6 +11,7 @@ export interface FamilyMember {
   user_email: string;
   user_name: string | null;
   role: "owner" | "member";
+  family_status: string | null;
   joined_at: string;
 }
 

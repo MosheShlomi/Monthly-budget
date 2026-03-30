@@ -7,6 +7,7 @@ import { z } from "zod";
 import { Modal } from "@/components/ui/Modal";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
+import { Select } from "@/components/ui/Select";
 import { apiFetch } from "@/lib/api";
 import type { Category, Card, Spending, SpendingCreate } from "@/types";
 import { clsx } from "clsx";
@@ -257,18 +258,15 @@ export function SpendingForm({ open, onClose, onSave, familyId, initial }: Props
 
         {/* Card select */}
         {paymentMethod === "card" && cards.length > 0 && (
-          <div className="flex flex-col gap-1">
-            <label className="text-sm font-medium text-slate-700">כרטיס</label>
-            <select
-              className="w-full px-3 py-2 rounded-lg border border-slate-300 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-primary-500"
-              {...register("card_id")}
-            >
-              <option value="">ללא כרטיס ספציפי</option>
-              {cards.map((c) => (
-                <option key={c.id} value={c.id}>{c.name}</option>
-              ))}
-            </select>
-          </div>
+          <Select
+            label="כרטיס"
+            value={watch("card_id") ?? ""}
+            options={[
+              { value: "", label: "ללא כרטיס ספציפי" },
+              ...cards.map((c) => ({ value: c.id, label: c.name })),
+            ]}
+            onChange={(v) => setValue("card_id", v || null)}
+          />
         )}
 
         {/* Date */}

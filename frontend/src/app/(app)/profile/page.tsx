@@ -7,9 +7,13 @@ import { z } from "zod";
 import { supabase } from "@/lib/supabase";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
+import { Select } from "@/components/ui/Select";
 import { toast } from "sonner";
 import { Camera, User } from "lucide-react";
 import type { User as SupabaseUser } from "@supabase/supabase-js";
+import { useFamilyStore } from "@/store/familyStore";
+import { apiFetch } from "@/lib/api";
+import type { FamilyMember } from "@/types";
 
 const profileSchema = z.object({
   full_name: z.string().min(2, "שם חייב להכיל לפחות 2 תווים"),
@@ -28,13 +32,28 @@ const passwordSchema = z
 type ProfileValues = z.infer<typeof profileSchema>;
 type PasswordValues = z.infer<typeof passwordSchema>;
 
+const FAMILY_STATUS_OPTIONS = [
+  { value: "husband", label: "בעל" },
+  { value: "wife", label: "אישה" },
+  { value: "son", label: "בן" },
+  { value: "daughter", label: "בת" },
+  { value: "father", label: "אבא" },
+  { value: "mother", label: "אמא" },
+  { value: "grandfather", label: "סבא" },
+  { value: "grandmother", label: "סבתא" },
+  { value: "other", label: "אחר" },
+];
+
 export default function ProfilePage() {
   const [user, setUser] = useState<SupabaseUser | null>(null);
   const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
   const [savingProfile, setSavingProfile] = useState(false);
   const [savingPassword, setSavingPassword] = useState(false);
+  const [familyStatus, setFamilyStatus] = useState<string>("");
+  const [savingStatus, setSavingStatus] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const { currentFamily, members, setMembers } = useFamilyStore();
 
   const profileForm = useForm<ProfileValues>({
     resolver: zodResolver(profileSchema),
@@ -52,9 +71,12 @@ export default function ProfilePage() {
           user.user_metadata?.full_name ?? ""
         );
         setAvatarUrl(user.user_metadata?.avatar_url ?? null);
+
+        const myMember = members.find((m) => m.user_id === user.id);
+        if (myMember?.family_status) setFamilyStatus(myMember.family_status);
       }
     });
-  }, [profileForm]);
+  }, [profileForm, members]);
 
   async function handleAvatarChange(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
@@ -109,6 +131,26 @@ export default function ProfilePage() {
       toast.error("שגיאה בעדכון הפרופיל");
     } finally {
       setSavingProfile(false);
+    }
+  }
+
+  async function onSaveFamilyStatus() {
+    if (!currentFamily) return;
+    setSavingStatus(true);
+    try {
+      const updated = await apiFetch<FamilyMember>(
+        `/api/v1/families/${currentFamily.id}/members/me`,
+        {
+          method: "PATCH",
+          body: JSON.stringify({ family_status: familyStatus || null }),
+        }
+      );
+      setMembers(members.map((m) => (m.user_id === updated.user_id ? updated : m)));
+      toast.success("התפקיד עודכן בהצלחה");
+    } catch {
+      toast.error("שגיאה בעדכון התפקיד");
+    } finally {
+      setSavingStatus(false);
     }
   }
 
@@ -212,6 +254,30 @@ export default function ProfilePage() {
           </Button>
         </form>
       </div>
+
+      {/* Family status */}
+      {currentFamily && (
+        <div className="bg-white rounded-2xl border border-slate-200 p-6">
+          <h2 className="text-base font-semibold text-slate-900 mb-1">
+            תפקיד במשפחה
+          </h2>
+          <p className="text-xs text-slate-500 mb-4">
+            יוצג כתג ליד שם המשפחה בסרגל הניווט
+          </p>
+          <div className="space-y-4">
+            <Select
+              label="תפקיד"
+              value={familyStatus}
+              options={FAMILY_STATUS_OPTIONS}
+              placeholder="בחר תפקיד"
+              onChange={setFamilyStatus}
+            />
+            <Button onClick={onSaveFamilyStatus} loading={savingStatus}>
+              שמור תפקיד
+            </Button>
+          </div>
+        </div>
+      )}
 
       {/* Password */}
       <div className="bg-white rounded-2xl border border-slate-200 p-6">

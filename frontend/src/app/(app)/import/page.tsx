@@ -2,7 +2,7 @@
 
 import { useState, useCallback } from "react";
 import { useDropzone } from "react-dropzone";
-import { Upload, CheckCircle, FileSpreadsheet, ArrowLeft } from "lucide-react";
+import { Upload, CheckCircle, FileSpreadsheet, Trash2 } from "lucide-react";
 import { useFamilyStore } from "@/store/familyStore";
 import { apiUpload, apiFetch } from "@/lib/api";
 import { Button } from "@/components/ui/Button";
@@ -10,39 +10,71 @@ import { Card } from "@/components/ui/Card";
 import { Select } from "@/components/ui/Select";
 import { Spinner } from "@/components/ui/Spinner";
 import { toast } from "sonner";
-import type { Category } from "@/types";
+import type { Category, FamilyMember } from "@/types";
 
-type Step = "upload" | "map" | "confirm" | "success";
+type Step = "upload" | "preview" | "confirm" | "success";
+type RowType = "expenses" | "incomes";
 
-interface PreviewData {
-  headers: string[];
-  rows: string[][];
-  total_rows: number;
-}
-
-interface MappedRow {
-  amount: number;
-  category_id: string;
+interface EditableRow {
+  _id: number;
   date: string;
-  payment_method: string;
-  notes?: string;
+  amount: number;
+  notes: string;
+  category_id: string;
+  category_name: string;
+  payment_method?: "cash" | "card";
 }
+
+interface EditableSheet {
+  name: string;
+  expenses: EditableRow[];
+  incomes: EditableRow[];
+}
+
+interface ParsedRow {
+  date: string;
+  amount: number;
+  notes: string | null;
+  category_name: string;
+  payment_method?: "cash" | "card";
+}
+
+interface ParsedSheet {
+  name: string;
+  expenses: ParsedRow[];
+  incomes: ParsedRow[];
+}
+
+interface BudgetPreview {
+  sheets: ParsedSheet[];
+  all_category_names: string[];
+  matched_categories: Record<string, string>;
+}
+
+interface ImportResult {
+  expenses_imported: number;
+  incomes_imported: number;
+}
+
+const STEPS: Step[] = ["upload", "preview", "confirm", "success"];
+const STEP_LABELS: Record<Step, string> = {
+  upload: "העלאה",
+  preview: "עריכה",
+  confirm: "אישור",
+  success: "סיום",
+};
 
 export default function ImportPage() {
   const { currentFamily } = useFamilyStore();
   const [step, setStep] = useState<Step>("upload");
   const [file, setFile] = useState<File | null>(null);
-  const [preview, setPreview] = useState<PreviewData | null>(null);
+  const [members, setMembers] = useState<FamilyMember[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
   const [loading, setLoading] = useState(false);
-  const [importedCount, setImportedCount] = useState(0);
-
-  // Column mapping
-  const [amountCol, setAmountCol] = useState("");
-  const [dateCol, setDateCol] = useState("");
-  const [notesCol, setNotesCol] = useState("");
-  const [defaultCategory, setDefaultCategory] = useState("");
-  const [defaultPayment, setDefaultPayment] = useState("cash");
+  const [result, setResult] = useState<ImportResult | null>(null);
+  const [editableSheets, setEditableSheets] = useState<EditableSheet[]>([]);
+  const [memberAssignment, setMemberAssignment] = useState<Record<string, string>>({});
+  const [activeTab, setActiveTab] = useState<Record<string, RowType>>({});
 
   const onDrop = useCallback(
     async (acceptedFiles: File[]) => {
@@ -52,18 +84,58 @@ export default function ImportPage() {
       setLoading(true);
 
       try {
-        // Load categories
-        const cats = await apiFetch<Category[]>(`/api/v1/families/${currentFamily.id}/categories`);
+        const [cats, mems] = await Promise.all([
+          apiFetch<Category[]>(`/api/v1/families/${currentFamily.id}/categories`),
+          apiFetch<FamilyMember[]>(`/api/v1/families/${currentFamily.id}/members`),
+        ]);
         setCategories(cats);
+        setMembers(mems);
 
         const formData = new FormData();
         formData.append("file", f);
-        const prev = await apiUpload<PreviewData>(
-          `/api/v1/families/${currentFamily.id}/import/preview`,
+        const prev = await apiUpload<BudgetPreview>(
+          `/api/v1/families/${currentFamily.id}/import/budget-preview`,
           formData
         );
-        setPreview(prev);
-        setStep("map");
+
+        // Build editable sheets, auto-matching category IDs where possible
+        let rowId = 0;
+        const sheets: EditableSheet[] = prev.sheets.map((sheet) => ({
+          name: sheet.name,
+          expenses: sheet.expenses.map((row) => ({
+            _id: rowId++,
+            date: row.date,
+            amount: row.amount,
+            notes: row.notes ?? "",
+            category_id: prev.matched_categories[row.category_name.toLowerCase()] ?? "",
+            category_name: row.category_name,
+            payment_method: row.payment_method ?? "card",
+          })),
+          incomes: sheet.incomes.map((row) => ({
+            _id: rowId++,
+            date: row.date,
+            amount: row.amount,
+            notes: row.notes ?? "",
+            category_id: prev.matched_categories[row.category_name.toLowerCase()] ?? "",
+            category_name: row.category_name,
+          })),
+        }));
+        setEditableSheets(sheets);
+
+        // Default active tab to "expenses"
+        const tabs: Record<string, RowType> = {};
+        sheets.forEach((s) => { tabs[s.name] = "expenses"; });
+        setActiveTab(tabs);
+
+        // Auto-assign members: first sheet → first member, second → second
+        const assignment: Record<string, string> = {};
+        sheets.forEach((sheet, i) => {
+          const member = mems[i] ?? mems[mems.length - 1];
+          if (member) assignment[sheet.name] = member.user_id;
+        });
+        setMemberAssignment(assignment);
+
+        setStep("preview");
       } catch (e: unknown) {
         toast.error(e instanceof Error ? e.message : "שגיאה בטעינת הקובץ");
       } finally {
@@ -75,44 +147,66 @@ export default function ImportPage() {
 
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
     onDrop,
-    accept: { "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": [".xlsx"], "application/vnd.ms-excel": [".xls"] },
+    accept: {
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": [".xlsx"],
+      "application/vnd.ms-excel": [".xls"],
+    },
     multiple: false,
   });
 
-  async function handleConfirm() {
-    if (!currentFamily || !preview || !amountCol || !dateCol || !defaultCategory) {
-      toast.error("נא למלא את כל השדות הנדרשים");
-      return;
-    }
+  function updateRow(sheetName: string, type: RowType, rowId: number, patch: Partial<EditableRow>) {
+    setEditableSheets((prev) =>
+      prev.map((sheet) =>
+        sheet.name === sheetName
+          ? { ...sheet, [type]: sheet[type].map((r) => (r._id === rowId ? { ...r, ...patch } : r)) }
+          : sheet
+      )
+    );
+  }
 
-    const amountIdx = preview.headers.indexOf(amountCol);
-    const dateIdx = preview.headers.indexOf(dateCol);
-    const notesIdx = notesCol ? preview.headers.indexOf(notesCol) : -1;
+  function deleteRow(sheetName: string, type: RowType, rowId: number) {
+    setEditableSheets((prev) =>
+      prev.map((sheet) =>
+        sheet.name === sheetName
+          ? { ...sheet, [type]: sheet[type].filter((r) => r._id !== rowId) }
+          : sheet
+      )
+    );
+  }
 
-    const rows: MappedRow[] = preview.rows
-      .map((row) => {
-        const amount = parseFloat(row[amountIdx]);
-        if (isNaN(amount) || amount <= 0) return null;
-        return {
-          amount,
-          category_id: defaultCategory,
-          date: row[dateIdx] || new Date().toISOString().split("T")[0],
-          payment_method: defaultPayment,
-          notes: notesIdx >= 0 ? row[notesIdx] : undefined,
-        };
-      })
-      .filter(Boolean) as MappedRow[];
-
+  async function handleImport() {
+    if (!currentFamily) return;
     setLoading(true);
     try {
-      const result = await apiFetch<{ imported: number }>(
-        `/api/v1/families/${currentFamily.id}/import/confirm`,
-        {
-          method: "POST",
-          body: JSON.stringify({ rows }),
-        }
+      const sheets = editableSheets.map((sheet) => {
+        const member = members.find((m) => m.user_id === memberAssignment[sheet.name]);
+        return {
+          member_user_id: memberAssignment[sheet.name],
+          member_user_email: member?.user_email ?? "",
+          member_user_name: member?.user_name ?? null,
+          expenses: sheet.expenses.map((row) => ({
+            date: row.date,
+            amount: row.amount,
+            notes: row.notes || null,
+            category_id: row.category_id || null,
+            category_name: row.category_name,
+            payment_method: row.payment_method ?? "card",
+          })),
+          incomes: sheet.incomes.map((row) => ({
+            date: row.date,
+            amount: row.amount,
+            notes: row.notes || null,
+            category_id: row.category_id || null,
+            category_name: row.category_name,
+          })),
+        };
+      });
+
+      const res = await apiFetch<ImportResult>(
+        `/api/v1/families/${currentFamily.id}/import/budget-confirm`,
+        { method: "POST", body: JSON.stringify({ sheets }) }
       );
-      setImportedCount(result.imported);
+      setResult(res);
       setStep("success");
     } catch (e: unknown) {
       toast.error(e instanceof Error ? e.message : "שגיאה בייבוא");
@@ -124,36 +218,61 @@ export default function ImportPage() {
   function reset() {
     setStep("upload");
     setFile(null);
-    setPreview(null);
-    setAmountCol("");
-    setDateCol("");
-    setNotesCol("");
-    setDefaultCategory("");
+    setEditableSheets([]);
+    setMemberAssignment({});
+    setResult(null);
+    setActiveTab({});
   }
 
   if (!currentFamily) {
     return <div className="text-center py-20 text-slate-400">אין משפחה מחוברת</div>;
   }
 
-  const colOptions = preview?.headers.map((h) => ({ value: h, label: h })) ?? [];
+  const canConfirm = editableSheets.every((s) => !!memberAssignment[s.name]);
+
+  const memberOptions = members.map((m) => ({
+    value: m.user_id,
+    label: m.user_name ?? m.user_email,
+  }));
+
+  const expenseCatOptions = [
+    { value: "", label: "— בחר קטגוריה —" },
+    ...categories.filter((c) => c.type === "expense").map((c) => ({ value: c.id, label: c.name })),
+  ];
+
+  const incomeCatOptions = [
+    { value: "", label: "— בחר קטגוריה —" },
+    ...categories.filter((c) => c.type === "income").map((c) => ({ value: c.id, label: c.name })),
+  ];
 
   return (
-    <div className="max-w-2xl mx-auto space-y-6">
+    <div className="max-w-4xl mx-auto space-y-6">
       <div>
-        <h1 className="text-2xl font-bold text-slate-900">ייבוא מ-Excel</h1>
-        <p className="text-sm text-slate-500 mt-0.5">ייבוא הוצאות מקובץ אקסל</p>
+        <h1 className="text-2xl font-bold text-slate-900">ייבוא תקציב חודשי</h1>
+        <p className="text-sm text-slate-500 mt-0.5">ייבוא הוצאות והכנסות מקובץ תקציב Excel</p>
       </div>
 
       {/* Steps indicator */}
       <div className="flex items-center gap-2 text-xs">
-        {(["upload", "map", "confirm", "success"] as Step[]).map((s, i) => (
+        {STEPS.map((s, i) => (
           <div key={s} className="flex items-center gap-2">
-            <div className={`w-6 h-6 rounded-full flex items-center justify-center font-bold text-xs
-              ${step === s ? "bg-primary-600 text-white" :
-                (["upload","map","confirm","success"].indexOf(step) > i ? "bg-green-500 text-white" : "bg-slate-200 text-slate-500")}`}>
-              {i + 1}
+            <div className="flex items-center gap-1.5">
+              <div
+                className={`w-6 h-6 rounded-full flex items-center justify-center font-bold text-xs
+                  ${step === s
+                    ? "bg-primary-600 text-white"
+                    : STEPS.indexOf(step) > i
+                    ? "bg-green-500 text-white"
+                    : "bg-slate-200 text-slate-500"
+                  }`}
+              >
+                {i + 1}
+              </div>
+              <span className={`hidden sm:inline ${step === s ? "text-slate-700 font-medium" : "text-slate-400"}`}>
+                {STEP_LABELS[s]}
+              </span>
             </div>
-            {i < 3 && <div className="w-8 h-0.5 bg-slate-200" />}
+            {i < STEPS.length - 1 && <div className="w-6 h-0.5 bg-slate-200" />}
           </div>
         ))}
       </div>
@@ -178,103 +297,182 @@ export default function ImportPage() {
               </>
             )}
           </div>
+          <div className="mt-4 text-xs text-slate-400 space-y-1">
+            <p className="font-medium text-slate-500">מבנה הקובץ הנדרש:</p>
+            <p>• גיליון 1: סיכום (מדולג)</p>
+            <p>• גיליון 2: הוצאות והכנסות של המשתמש הראשון</p>
+            <p>• גיליון 3: הוצאות והכנסות של המשתמש השני</p>
+          </div>
         </Card>
       )}
 
-      {/* Step 2: Map columns */}
-      {step === "map" && preview && (
+      {/* Step 2: Preview & Edit */}
+      {step === "preview" && editableSheets.length > 0 && (
         <div className="space-y-4">
-          <Card>
-            <div className="flex items-center gap-2 mb-4">
-              <FileSpreadsheet className="w-5 h-5 text-slate-400" />
-              <span className="text-sm font-medium text-slate-700">{file?.name}</span>
-              <span className="text-xs text-slate-400">· {preview.total_rows} שורות</span>
-            </div>
+          <div className="flex items-center gap-2 text-sm text-slate-600">
+            <FileSpreadsheet className="w-4 h-4 text-slate-400" />
+            <span className="font-medium">{file?.name}</span>
+          </div>
 
-            <div className="space-y-4">
-              <Select
-                label="עמודת סכום *"
-                value={amountCol}
-                options={colOptions}
-                onChange={(e) => setAmountCol(e.target.value)}
-                placeholder="בחר עמודה"
-              />
-              <Select
-                label="עמודת תאריך *"
-                value={dateCol}
-                options={colOptions}
-                onChange={(e) => setDateCol(e.target.value)}
-                placeholder="בחר עמודה"
-              />
-              <Select
-                label="עמודת הערות (אופציונלי)"
-                value={notesCol}
-                options={[{ value: "", label: "ללא" }, ...colOptions]}
-                onChange={(e) => setNotesCol(e.target.value)}
-              />
-              <Select
-                label="קטגוריה לכל ההוצאות *"
-                value={defaultCategory}
-                options={categories.map((c) => ({ value: c.id, label: c.name }))}
-                onChange={(e) => setDefaultCategory(e.target.value)}
-                placeholder="בחר קטגוריה"
-              />
-              <div className="flex flex-col gap-1">
-                <label className="text-sm font-medium text-slate-700">אמצעי תשלום</label>
-                <div className="flex gap-2">
-                  <button
-                    onClick={() => setDefaultPayment("cash")}
-                    className={`flex-1 py-2 rounded-lg text-sm font-medium border-2 transition-all
-                      ${defaultPayment === "cash" ? "bg-green-50 border-green-500 text-green-700" : "bg-white border-slate-200 text-slate-600"}`}
-                  >
-                    מזומן
-                  </button>
-                  <button
-                    onClick={() => setDefaultPayment("card")}
-                    className={`flex-1 py-2 rounded-lg text-sm font-medium border-2 transition-all
-                      ${defaultPayment === "card" ? "bg-primary-50 border-primary-500 text-primary-700" : "bg-white border-slate-200 text-slate-600"}`}
-                  >
-                    כרטיס
-                  </button>
-                </div>
-              </div>
-            </div>
-          </Card>
+          {editableSheets.map((sheet) => {
+            const tab = activeTab[sheet.name] ?? "expenses";
+            const rows = sheet[tab];
+            const catOptions = tab === "expenses" ? expenseCatOptions : incomeCatOptions;
 
-          {/* Preview table */}
-          {preview.rows.length > 0 && (
-            <Card padding="none">
-              <div className="px-4 py-3 border-b border-slate-100">
-                <p className="text-sm font-medium text-slate-700">תצוגה מקדימה (5 שורות ראשונות)</p>
-              </div>
-              <div className="overflow-x-auto">
-                <table className="w-full text-xs">
-                  <thead>
-                    <tr className="bg-slate-50">
-                      {preview.headers.map((h, i) => (
-                        <th key={i} className="px-3 py-2 text-right font-medium text-slate-600 border-b border-slate-100">
-                          {h}
-                        </th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {preview.rows.slice(0, 5).map((row, i) => (
-                      <tr key={i} className="border-b border-slate-50 hover:bg-slate-50">
-                        {row.map((cell, j) => (
-                          <td key={j} className="px-3 py-2 text-slate-600">{cell}</td>
-                        ))}
-                      </tr>
+            return (
+              <Card key={sheet.name} padding="none">
+                {/* Sheet header */}
+                <div className="px-4 pt-4 pb-3 border-b border-slate-100 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <p className="font-semibold text-slate-800">{sheet.name}</p>
+                    <span className="text-xs text-slate-400">
+                      {sheet.expenses.length} הוצאות · {sheet.incomes.length} הכנסות
+                    </span>
+                  </div>
+
+                  <Select
+                    label="חבר משפחה *"
+                    value={memberAssignment[sheet.name] ?? ""}
+                    options={memberOptions}
+                    onChange={(v) => setMemberAssignment((p) => ({ ...p, [sheet.name]: v }))}
+                    placeholder="בחר חבר"
+                  />
+
+                  {/* Expense / Income tabs */}
+                  <div className="flex gap-1">
+                    {(["expenses", "incomes"] as RowType[]).map((t) => (
+                      <button
+                        key={t}
+                        onClick={() => setActiveTab((p) => ({ ...p, [sheet.name]: t }))}
+                        className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors
+                          ${tab === t
+                            ? "bg-primary-600 text-white"
+                            : "bg-slate-100 text-slate-500 hover:bg-slate-200"
+                          }`}
+                      >
+                        {t === "expenses"
+                          ? `הוצאות (${sheet.expenses.length})`
+                          : `הכנסות (${sheet.incomes.length})`}
+                      </button>
                     ))}
-                  </tbody>
-                </table>
-              </div>
-            </Card>
-          )}
+                  </div>
+                </div>
+
+                {/* Editable table */}
+                {rows.length === 0 ? (
+                  <p className="text-sm text-slate-400 text-center py-8">אין שורות</p>
+                ) : (
+                  <div className="overflow-auto max-h-[420px]">
+                    <table className="w-full text-xs min-w-[600px]">
+                      <thead className="sticky top-0 bg-slate-50 z-10 border-b border-slate-100">
+                        <tr>
+                          <th className="px-3 py-2 text-right font-medium text-slate-500 w-32">תאריך</th>
+                          <th className="px-3 py-2 text-right font-medium text-slate-500 w-24">סכום</th>
+                          <th className="px-3 py-2 text-right font-medium text-slate-500">תיאור</th>
+                          <th className="px-3 py-2 text-right font-medium text-slate-500 w-44">קטגוריה</th>
+                          {tab === "expenses" && (
+                            <th className="px-3 py-2 text-right font-medium text-slate-500 w-28">תשלום</th>
+                          )}
+                          <th className="px-2 py-2 w-8" />
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {rows.map((row) => (
+                          <tr key={row._id} className="border-t border-slate-50 hover:bg-slate-50/60">
+                            <td className="px-3 py-1.5">
+                              <input
+                                type="date"
+                                value={row.date}
+                                onChange={(e) => updateRow(sheet.name, tab, row._id, { date: e.target.value })}
+                                className="w-full text-xs border border-slate-200 rounded px-1.5 py-1 text-slate-700 focus:outline-none focus:ring-1 focus:ring-primary-400"
+                              />
+                            </td>
+                            <td className="px-3 py-1.5">
+                              <input
+                                type="number"
+                                value={row.amount}
+                                onChange={(e) =>
+                                  updateRow(sheet.name, tab, row._id, { amount: parseFloat(e.target.value) || 0 })
+                                }
+                                className="w-full text-xs border border-slate-200 rounded px-1.5 py-1 text-slate-700 focus:outline-none focus:ring-1 focus:ring-primary-400"
+                              />
+                            </td>
+                            <td className="px-3 py-1.5">
+                              <input
+                                type="text"
+                                value={row.notes}
+                                onChange={(e) => updateRow(sheet.name, tab, row._id, { notes: e.target.value })}
+                                placeholder="—"
+                                className="w-full text-xs border border-slate-200 rounded px-1.5 py-1 text-slate-700 focus:outline-none focus:ring-1 focus:ring-primary-400"
+                              />
+                            </td>
+                            <td className="px-3 py-1.5">
+                              <select
+                                value={row.category_id}
+                                onChange={(e) => updateRow(sheet.name, tab, row._id, { category_id: e.target.value })}
+                                className={`w-full text-xs border rounded px-1.5 py-1 focus:outline-none focus:ring-1 focus:ring-primary-400
+                                  ${row.category_id
+                                    ? "border-slate-200 text-slate-700 bg-white"
+                                    : "border-amber-300 text-amber-700 bg-amber-50"
+                                  }`}
+                              >
+                                {catOptions.map((opt) => (
+                                  <option key={opt.value} value={opt.value}>{opt.label}</option>
+                                ))}
+                              </select>
+                              {!row.category_id && (
+                                <p className="text-amber-500 mt-0.5" style={{ fontSize: "10px" }}>
+                                  ייווצר: {row.category_name}
+                                </p>
+                              )}
+                            </td>
+                            {tab === "expenses" && (
+                              <td className="px-3 py-1.5">
+                                <div className="flex gap-1">
+                                  <button
+                                    onClick={() => updateRow(sheet.name, tab, row._id, { payment_method: "cash" })}
+                                    className={`flex-1 py-0.5 rounded text-xs font-medium border transition-all
+                                      ${row.payment_method === "cash"
+                                        ? "bg-green-50 border-green-400 text-green-700"
+                                        : "bg-white border-slate-200 text-slate-500"
+                                      }`}
+                                  >
+                                    מזומן
+                                  </button>
+                                  <button
+                                    onClick={() => updateRow(sheet.name, tab, row._id, { payment_method: "card" })}
+                                    className={`flex-1 py-0.5 rounded text-xs font-medium border transition-all
+                                      ${row.payment_method === "card"
+                                        ? "bg-primary-50 border-primary-400 text-primary-700"
+                                        : "bg-white border-slate-200 text-slate-500"
+                                      }`}
+                                  >
+                                    כרטיס
+                                  </button>
+                                </div>
+                              </td>
+                            )}
+                            <td className="px-2 py-1.5">
+                              <button
+                                onClick={() => deleteRow(sheet.name, tab, row._id)}
+                                className="text-slate-300 hover:text-red-400 transition-colors"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </Card>
+            );
+          })}
 
           <div className="flex gap-3">
-            <Button onClick={() => setStep("confirm")} className="flex-1">
-              המשך
+            <Button onClick={() => setStep("confirm")} disabled={!canConfirm} className="flex-1">
+              המשך לאישור
             </Button>
             <Button variant="secondary" onClick={reset} className="flex-1">
               ביטול
@@ -284,38 +482,66 @@ export default function ImportPage() {
       )}
 
       {/* Step 3: Confirm */}
-      {step === "confirm" && preview && (
-        <Card className="text-center">
-          <FileSpreadsheet className="w-12 h-12 text-primary-400 mx-auto mb-3" />
-          <p className="text-lg font-semibold text-slate-900 mb-1">מוכן לייבוא</p>
-          <p className="text-slate-500 text-sm mb-6">
-            ייבוא {preview.total_rows} שורות מ-{file?.name}
-          </p>
+      {step === "confirm" && (
+        <div className="space-y-4">
+          <Card>
+            <p className="font-semibold text-slate-800 mb-4">סיכום לפני ייבוא</p>
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="text-xs text-slate-400 border-b border-slate-100">
+                  <th className="pb-2 text-right font-medium">גיליון</th>
+                  <th className="pb-2 text-right font-medium">חבר משפחה</th>
+                  <th className="pb-2 text-right font-medium">הוצאות</th>
+                  <th className="pb-2 text-right font-medium">הכנסות</th>
+                </tr>
+              </thead>
+              <tbody>
+                {editableSheets.map((sheet) => {
+                  const member = members.find((m) => m.user_id === memberAssignment[sheet.name]);
+                  const newCats = sheet.expenses.filter((r) => !r.category_id).length
+                    + sheet.incomes.filter((r) => !r.category_id).length;
+                  return (
+                    <tr key={sheet.name} className="border-b border-slate-50">
+                      <td className="py-2 text-slate-700">{sheet.name}</td>
+                      <td className="py-2 text-slate-700">{member?.user_name ?? member?.user_email ?? "—"}</td>
+                      <td className="py-2 text-slate-700">{sheet.expenses.length}</td>
+                      <td className="py-2 text-slate-700">
+                        {sheet.incomes.length}
+                        {newCats > 0 && (
+                          <span className="text-amber-500 text-xs mr-1.5">
+                            ({newCats} קטגוריות חדשות ייווצרו)
+                          </span>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </Card>
+
           <div className="flex gap-3">
-            <Button onClick={handleConfirm} loading={loading} className="flex-1">
+            <Button onClick={handleImport} loading={loading} className="flex-1">
               ייבא עכשיו
             </Button>
-            <Button variant="secondary" onClick={() => setStep("map")} className="flex-1">
-              <ArrowLeft className="w-4 h-4 rtl-flip" />
-              חזור
+            <Button variant="secondary" onClick={() => setStep("preview")} className="flex-1">
+              חזור לעריכה
             </Button>
           </div>
-        </Card>
+        </div>
       )}
 
       {/* Step 4: Success */}
-      {step === "success" && (
+      {step === "success" && result && (
         <Card className="text-center py-10">
           <CheckCircle className="w-16 h-16 text-green-500 mx-auto mb-4" />
-          <p className="text-2xl font-bold text-slate-900 mb-1">ייבוא הושלם!</p>
-          <p className="text-slate-500 mb-6">{importedCount} הוצאות נוספו בהצלחה</p>
+          <p className="text-2xl font-bold text-slate-900 mb-2">ייבוא הושלם!</p>
+          <p className="text-slate-500 mb-1">{result.expenses_imported} הוצאות יובאו בהצלחה</p>
+          <p className="text-slate-500 mb-6">{result.incomes_imported} הכנסות יובאו בהצלחה</p>
           <div className="flex gap-3 justify-center">
-            <Button onClick={() => window.location.href = "/spendings"}>
-              לדף ההוצאות
-            </Button>
-            <Button variant="secondary" onClick={reset}>
-              ייבוא נוסף
-            </Button>
+            <Button onClick={() => (window.location.href = "/spendings")}>לדף ההוצאות</Button>
+            <Button variant="secondary" onClick={() => (window.location.href = "/incomes")}>לדף ההכנסות</Button>
+            <Button variant="secondary" onClick={reset}>ייבוא נוסף</Button>
           </div>
         </Card>
       )}

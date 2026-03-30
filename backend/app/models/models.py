@@ -61,6 +61,7 @@ class FamilyMember(Base):
     user_email = Column(String(255), nullable=False)
     user_name = Column(String(255), nullable=True)
     role = Column(SAEnum(MemberRole), nullable=False, default=MemberRole.member)
+    family_status = Column(String(50), nullable=True)
     joined_at = Column(DateTime(timezone=True), server_default=func.now())
 
     family = relationship("Family", back_populates="members")

@@ -258,13 +258,13 @@ export default function BudgetGoalsPage() {
           <Select
             value={String(month)}
             options={monthOptions}
-            onChange={(e) => setMonth(Number(e.target.value))}
+            onChange={(v) => setMonth(Number(v))}
             className="w-32"
           />
           <Select
             value={String(year)}
             options={yearOptions}
-            onChange={(e) => setYear(Number(e.target.value))}
+            onChange={(v) => setYear(Number(v))}
             className="w-24"
           />
         </div>
